@@ -143,17 +143,7 @@ def macros(basedir, elm, toks, expands):
     for x in elm.getElementsByTagName("xml"):
         expands[x.getAttribute("name")] = x
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('tool', type=str)
-    args = parser.parse_args()
-
-    basedir = os.path.dirname(args.tool)
-
-    dom = xml.dom.minidom.parse(args.tool)
-
-    tool = dom.documentElement
-
+def galaxy2cwl(tool, basedir):
     cwl = {"class":"CommandLineTool"}
 
     cwl["id"] = "#" + tool.getAttribute("id")
@@ -199,10 +189,38 @@ def main():
     cwl["inputs"] = inpschema(tool.getElementsByTagName("inputs")[0], expands, names, top=True)
     cwl["outputs"] = outschema(cwl["inputs"], tool.getElementsByTagName("outputs")[0], expands, names, top=True)
 
-    fn = os.path.splitext(args.tool)[0] + ".cwl"
-    with open(fn, "w") as out:
-        out.write("#!/usr/bin/env cwl-runner\n")
-        yaml.safe_dump([cwl], out, encoding="utf-8")
+    return cwl
+
+def main(argv=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument('tool', type=str, nargs=1)
+    parser.add_argument('out', type=str, nargs="?")
+    args = parser.parse_args(argv)
+
+    basedir = os.path.dirname(args.tool[0])
+
+    dom = xml.dom.minidom.parse(args.tool[0])
+
+    cwl = galaxy2cwl(dom.documentElement, basedir)
+
+    if args.out == "-":
+        fn = "stdout"
+        out = sys.stderr
+    elif args.out:
+        fn = args.out
+        out = open(fn, "w")
+    else:
+        fn = os.path.splitext(args.tool[0])[0] + ".cwl"
+        out = open(fn, "w")
+
+    out.write("#!/usr/bin/env cwl-runner\n")
+    yaml.safe_dump([cwl], out, encoding="utf-8")
+
+    out.close()
+
     os.chmod(fn, os.stat(fn).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
-main()
+    print >>sys.stderr, "Wrote " + fn
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
