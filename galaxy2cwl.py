@@ -160,15 +160,27 @@ def main():
 
     cwl["requirements"] = [{
         "class": "ExpressionEngineRequirement",
-        "id": "#cheetah",
-        "engineCommand": "./cheetah-engine.py"
+        "id": "#galaxy_command_line",
+        "engineCommand": "./galaxy-command-line.py"
+    },
+    {
+        "class": "ExpressionEngineRequirement",
+        "id": "#galaxy_template",
+        "engineCommand": "./galaxy-template.py"
+    },
+    {
+        "class": "EnvVarRequirement",
+        "envDef": [{
+            "envName": "GALAXY_SLOTS",
+            "envValue": ""
         }]
+    }]
 
     interpreter = tool.getElementsByTagName("command")[0].getAttribute("interpreter")
 
     cwl["arguments"] = [{
         "valueFrom": {
-            "engine": "#cheetah",
+            "engine": "#galaxy_command_line",
             "script": interpreter + tool.getElementsByTagName("command")[0].firstChild.data
             }
         }]
