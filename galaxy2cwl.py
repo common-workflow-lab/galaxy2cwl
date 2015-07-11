@@ -1,9 +1,12 @@
+#!/usr/bin/env python
+
 import xml.dom.minidom
 import argparse
 import pprint
 import os
 import yaml
 import sys
+import stat
 
 # def literal_unicode_representer(dumper, data):
 #     if '\n' in data:
@@ -196,6 +199,10 @@ def main():
     cwl["inputs"] = inpschema(tool.getElementsByTagName("inputs")[0], expands, names, top=True)
     cwl["outputs"] = outschema(cwl["inputs"], tool.getElementsByTagName("outputs")[0], expands, names, top=True)
 
-    yaml.safe_dump([cwl], sys.stdout, encoding="utf-8")
+    fn = os.path.splitext(args.tool)[0] + ".cwl"
+    with open(fn, "w") as out:
+        out.write("#!/usr/bin/env cwl-runner\n")
+        yaml.safe_dump([cwl], out, encoding="utf-8")
+    os.chmod(fn, os.stat(fn).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 main()
