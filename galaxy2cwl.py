@@ -2,8 +2,19 @@ import xml.dom.minidom
 import argparse
 import pprint
 import os
+import yaml
+import sys
 
-def inpschema(elm, expands, top=False):
+def uniq(names, n):
+    stem = n
+    i = 1
+    while n in names:
+        i += 1
+        n = stem + str(i)
+    names.add(n)
+    return n
+
+def inpschema(elm, expands, names, top=False):
     schema = []
 
     for e in elm.childNodes:
@@ -19,13 +30,16 @@ def inpschema(elm, expands, top=False):
             sch["type"] = []
 
             for when in e.getElementsByTagName("when"):
-                f = {"type": "record", "name": when.getAttribute("value")}
-                f["fields"] = inpschema(when, expands)
+                f = {"type": "record", "name": uniq(names, when.getAttribute("value"))}
+                f["fields"] = inpschema(when, expands, names)
                 f["fields"].append({
                     "name": e.getElementsByTagName("param")[0].getAttribute("name"),
-                    "type": "enum",
-                    "symbols": [when.getAttribute("value")]
-                    })
+                    "type": {
+                        "type": "enum",
+                        "symbols": [when.getAttribute("value")],
+                        "name": uniq(names, when.getAttribute("value"))
+                    }
+                })
                 sch["type"].append(f)
 
             schema.append(sch)
@@ -40,20 +54,25 @@ def inpschema(elm, expands, top=False):
 
             sch["label"] = e.getAttribute("label")
 
-            if param["type"] == "data":
+            if e.getAttribute("type") == "data":
                 sch["type"] = "File"
-            elif param["type"] == "select":
-                e = {"type": "enum"}
-                e["symbols"] = []
+            elif e.getAttribute("type") == "select":
+                en = {
+                    "type": {
+                        "type": "enum",
+                        "name": uniq(names, param.getAttribute("value"))
+                    }
+                }
+                en["type"]["symbols"] = []
                 for opt in e.getElementsByTagName("option"):
-                    e["symbols"].append(opt.getAttribute("value"))
-                if len(e["symbols"]) == 0:
+                    en["symbols"].append(opt.getAttribute("value"))
+                if len(en["type"]["symbols"]) == 0:
                     sch = None
                 else:
-                    sch["type"] = e
-            elif param["type"] == "text":
+                    sch["type"] = en
+            elif e.getAttribute("type") == "text":
                 sch["type"] = "string"
-            elif param["type"] == "integer":
+            elif e.getAttribute("type") == "integer":
                 sch["type"] = "int"
             else:
                 sch["type"] = "Any"
@@ -69,7 +88,7 @@ def inpschema(elm, expands, top=False):
                 schema.append(sch)
 
         elif e.tagName == "expand":
-            schema.extend(inpschema(expands[e.getAttribute("macro")], expands))
+            schema.extend(inpschema(expands[e.getAttribute("macro")], expands, names))
 
     return schema
 
@@ -99,6 +118,12 @@ def main():
 
     cwl["baseCommand"] = ["/bin/sh", "-c"]
 
+    cwl["reference"] = [{
+        "class": "ExpressionEngineRequirement",
+        "id": "#cheetah",
+        "engineCommand": "cheetah-engine.py"
+        }]
+
     interpreter = tool.getElementsByTagName("command")[0].getAttribute("interpreter")
 
     cwl["arguments"] = [{
@@ -112,13 +137,15 @@ def main():
 
     toks = {}
     expands = {}
+    names = set()
     macros(basedir, tool.getElementsByTagName("macros")[0], toks, expands)
 
     #pprint.pprint(toks)
     #pprint.pprint(expands)
 
-    cwl["inputs"].extend(inpschema(tool.getElementsByTagName("inputs")[0], expands, top=True))
+    cwl["inputs"].extend(inpschema(tool.getElementsByTagName("inputs")[0], expands, names, top=True))
+    cwl["outputs"] = []
 
-    pprint.pprint(cwl)
+    yaml.safe_dump([cwl], sys.stdout, encoding="utf-8")
 
 main()
