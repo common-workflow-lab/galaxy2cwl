@@ -57,6 +57,24 @@ def inpschema(elm, expands, names, top=False):
 
             schema.append(sch)
 
+        elif e.tagName == "repeat":
+            sch = {}
+            if top:
+                sch["id"] = "#" + e.getAttribute("name")
+            else:
+                sch["name"] = e.getAttribute("name")
+
+            sch["type"] = {
+                "type": "array",
+                "items": {
+                    "type": "record",
+                    "name": uniq(names, e.getAttribute("name")),
+                    "fields": inpschema(e, expands, names)
+                }
+            }
+
+            schema.append(sch)
+
         elif e.tagName == "param":
             sch = {}
 
@@ -85,6 +103,25 @@ def inpschema(elm, expands, names, top=False):
                 sch["type"] = "string"
             elif e.getAttribute("type") == "integer":
                 sch["type"] = "int"
+            elif e.getAttribute("type") == "float":
+                sch["type"] = "float"
+            elif e.getAttribute("type") == "boolean":
+                if e.getAttribute("truevalue") or e.getAttribute("falsevalue"):
+                    sch["type"] = {
+                        "type": "enum",
+                        "name": uniq(names, e.getAttribute("name")),
+                        "symbols": [e.getAttribute("falsevalue"), e.getAttribute("truevalue")]
+                    }
+                    if e.getAttribute("checked") == "true":
+                        sch["default"] = e.getAttribute("truevalue")
+                    else:
+                        sch["default"] = e.getAttribute("falsevalue")
+                else:
+                    sch["type"] = "boolean"
+                    if e.getAttribute("checked") == "true":
+                        sch["default"] = "true"
+                    else:
+                        sch["default"] = "false"
             else:
                 sch["type"] = "Any"
 
