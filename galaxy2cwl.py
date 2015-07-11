@@ -5,6 +5,15 @@ import os
 import yaml
 import sys
 
+# def literal_unicode_representer(dumper, data):
+#     if '\n' in data:
+#         return dumper.represent_scalar(u'tag:yaml.org,2002:str', data, style='|')
+#     else:
+#         return dumper.represent_scalar(u'tag:yaml.org,2002:str', data)
+
+# yaml.add_representer(unicode, literal_unicode_representer)
+# yaml.add_representer(str, literal_unicode_representer)
+
 def uniq(names, n):
     stem = n
     i = 1
@@ -20,6 +29,7 @@ def inpschema(elm, expands, names, top=False):
     for e in elm.childNodes:
         if not isinstance(e, xml.dom.minidom.Element):
             continue
+
         if e.tagName == "conditional":
             sch = {}
             if top:
@@ -44,7 +54,7 @@ def inpschema(elm, expands, names, top=False):
 
             schema.append(sch)
 
-        elif e.tagName == "cond":
+        elif e.tagName == "param":
             sch = {}
 
             if top:
@@ -58,15 +68,13 @@ def inpschema(elm, expands, names, top=False):
                 sch["type"] = "File"
             elif e.getAttribute("type") == "select":
                 en = {
-                    "type": {
-                        "type": "enum",
-                        "name": uniq(names, param.getAttribute("value"))
-                    }
+                    "type": "enum",
+                    "name": uniq(names, e.getAttribute("name"))
                 }
-                en["type"]["symbols"] = []
+                en["symbols"] = []
                 for opt in e.getElementsByTagName("option"):
                     en["symbols"].append(opt.getAttribute("value"))
-                if len(en["type"]["symbols"]) == 0:
+                if len(en["symbols"]) == 0:
                     sch = None
                 else:
                     sch["type"] = en
@@ -78,9 +86,9 @@ def inpschema(elm, expands, names, top=False):
                 sch["type"] = "Any"
 
             if sch:
-                if param.get("optional") == "True":
+                if e.getAttribute("optional") == "True":
                     sch["type"] = ["null", sch["type"]]
-                if param.get("value"):
+                if e.getAttribute("value"):
                     sch["default"] = e.getAttribute("value")
                     if sch["type"] == "int":
                         sch["default"] = int(sch["default"])
@@ -88,9 +96,41 @@ def inpschema(elm, expands, names, top=False):
                 schema.append(sch)
 
         elif e.tagName == "expand":
-            schema.extend(inpschema(expands[e.getAttribute("macro")], expands, names))
+            m = inpschema(expands[e.getAttribute("macro")], expands, names, top=top)
+            schema.extend(m)
 
     return schema
+
+def outschema(inputs, elm, expands, names, top=False):
+    schema = []
+
+    for e in elm.childNodes:
+        if not isinstance(e, xml.dom.minidom.Element):
+            continue
+
+        if e.tagName == "data":
+            sch = {}
+            if e.getAttribute("from_work_dir"):
+                u = e.getAttribute("from_work_dir")
+            else:
+                u = e.getAttribute("name")
+
+            inputs.append({
+                "id": "#" + uniq(names, e.getAttribute("name")),
+                "type": "string",
+                "default": u
+            })
+
+            schema.append({
+                "id": "#" + uniq(names, e.getAttribute("name")),
+                "type": "File",
+                "outputBinding": {
+                    "glob": u
+                }
+            })
+
+    return schema
+
 
 def macros(basedir, elm, toks, expands):
     for imp in elm.getElementsByTagName("import"):
@@ -98,7 +138,7 @@ def macros(basedir, elm, toks, expands):
     for tok in elm.getElementsByTagName("token"):
         toks[tok.getAttribute("name")] = tok.firstChild.data
     for x in elm.getElementsByTagName("xml"):
-        expands[x.getAttribute("name")] = elm
+        expands[x.getAttribute("name")] = x
 
 def main():
     parser = argparse.ArgumentParser()
@@ -118,10 +158,10 @@ def main():
 
     cwl["baseCommand"] = ["/bin/sh", "-c"]
 
-    cwl["reference"] = [{
+    cwl["requirements"] = [{
         "class": "ExpressionEngineRequirement",
         "id": "#cheetah",
-        "engineCommand": "cheetah-engine.py"
+        "engineCommand": "./cheetah-engine.py"
         }]
 
     interpreter = tool.getElementsByTagName("command")[0].getAttribute("interpreter")
@@ -133,8 +173,6 @@ def main():
             }
         }]
 
-    cwl["inputs"] = []
-
     toks = {}
     expands = {}
     names = set()
@@ -143,8 +181,8 @@ def main():
     #pprint.pprint(toks)
     #pprint.pprint(expands)
 
-    cwl["inputs"].extend(inpschema(tool.getElementsByTagName("inputs")[0], expands, names, top=True))
-    cwl["outputs"] = []
+    cwl["inputs"] = inpschema(tool.getElementsByTagName("inputs")[0], expands, names, top=True)
+    cwl["outputs"] = outschema(cwl["inputs"], tool.getElementsByTagName("outputs")[0], expands, names, top=True)
 
     yaml.safe_dump([cwl], sys.stdout, encoding="utf-8")
 
