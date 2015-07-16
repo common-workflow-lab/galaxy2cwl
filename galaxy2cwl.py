@@ -7,6 +7,8 @@ import os
 import yaml
 import sys
 import stat
+import json
+import hashlib
 
 # def literal_unicode_representer(dumper, data):
 #     if '\n' in data:
@@ -162,7 +164,7 @@ def outschema(inputs, elm, expands, names, top=False):
             })
 
             schema.append({
-                "id": "#" + uniq(names, e.getAttribute("name")),
+                "id": "#" + uniq(names, e.getAttribute("name")  + "_out"),
                 "type": "File",
                 "outputBinding": {
                     "glob": u
@@ -180,10 +182,11 @@ def macros(basedir, elm, toks, expands):
     for x in elm.getElementsByTagName("xml"):
         expands[x.getAttribute("name")] = x
 
+
 def galaxy2cwl(tool, basedir):
     cwl = {"class":"CommandLineTool"}
 
-    cwl["id"] = "#" + tool.getAttribute("id")
+    #cwl["id"] = "#" + tool.getAttribute("id")
     cwl["label"] = tool.getAttribute("name")
 
     cwl["baseCommand"] = ["/bin/sh", "-c"]
@@ -228,6 +231,96 @@ def galaxy2cwl(tool, basedir):
 
     return cwl
 
+
+def bindtestparam(name, sch, params, datadir):
+    if not isinstance(sch, dict):
+        if name in params:
+            return params[name]
+        else:
+            return None
+
+    if name in params:
+        if sch["type"] == "File":
+            return {
+                "class": "File",
+                "path": os.path.join(datadir, params[name])
+                }
+        elif isinstance(sch["type"], dict):
+            if sch["type"]["type"] == "enum":
+                if params[name] in sch["type"]["symbols"]:
+                    return params[name]
+                else:
+                    return None
+        else:
+            return params[name]
+
+    if isinstance(sch["type"], list):
+        for t in sch["type"]:
+            b = bindtestparam(name, t, params, datadir)
+            if b:
+                return b
+
+    if sch["type"] == "record":
+        r = {}
+        for f in sch["fields"]:
+            b = bindtestparam(f["name"], f, params, datadir)
+            if b is not None:
+                r[f["name"]] = b
+        return r
+
+def maketests(source, datadir, tool, cwl):
+    tests = []
+
+    n = 0
+    for test in tool.getElementsByTagName("tests")[0].getElementsByTagName("test"):
+        job = {}
+        params = {}
+        for p in test.getElementsByTagName("param"):
+            params[p.getAttribute("name")] = p.getAttribute("value")
+
+        for i in cwl["inputs"]:
+            b = bindtestparam(i["id"][1:], i, params, datadir)
+            if b is not None:
+                job[i["id"][1:]] = b
+
+        fn = os.path.splitext(source)[0] + "_testjob" + str(n) + ".json"
+
+        with open(fn, "w") as f:
+            f.write(json.dumps(job, indent=4))
+        print >>sys.stderr, "Wrote " + fn
+
+        outobj = {}
+
+        for out in test.getElementsByTagName("output"):
+            with open(os.path.join(datadir, out.getAttribute("file"))) as outfile:
+                checksum = hashlib.sha1()
+                filesize = 0
+                contents = outfile.read(1024*1024)
+                while contents != "":
+                    checksum.update(contents)
+                    filesize += len(contents)
+                    contents = outfile.read(1024*1024)
+
+            outobj[out.getAttribute("name")] = {
+                "class": "File",
+                "path": out.getAttribute("name"),
+                "size": filesize,
+                "checksum": "sha1$%s" % checksum.hexdigest()
+            }
+
+        tests.append({
+            "job": fn,
+            "tool": source,
+            "output": outobj
+        })
+        n += 1
+
+    fn = os.path.splitext(source)[0] + "_test.yaml"
+    with open(fn, "w") as f:
+        yaml.safe_dump(tests, f)
+    print >>sys.stderr, "Wrote " + fn
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('tool', type=str, nargs=1)
@@ -240,18 +333,22 @@ def main(argv=None):
 
     cwl = galaxy2cwl(dom.documentElement, basedir)
 
+    toolstem = os.path.split(args.tool[0])[1]
+    datadir = os.path.join(os.path.split(args.tool[0])[0], "test-data")
+
     if args.out == "-":
         fn = "stdout"
         out = sys.stderr
-    elif args.out:
-        fn = args.out
-        out = open(fn, "w")
     else:
-        fn = os.path.splitext(args.tool[0])[0] + ".cwl"
+        if args.out:
+            fn = args.out
+        else:
+            fn = os.path.splitext(toolstem)[0] + ".cwl"
         out = open(fn, "w")
+        maketests(fn, datadir, dom.documentElement, cwl)
 
     out.write("#!/usr/bin/env cwl-runner\n")
-    yaml.safe_dump([cwl], out, encoding="utf-8")
+    yaml.safe_dump(cwl, out, encoding="utf-8")
 
     out.close()
 
