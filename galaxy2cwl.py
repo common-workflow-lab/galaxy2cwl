@@ -32,7 +32,7 @@ def inpschema(elm, expands, names, top=False):
     schema = []
 
     for e in elm.childNodes:
-        if not isinstance(e, xml.dom.minidom.Element):
+        if e.nodeType != xml.dom.Node.ELEMENT_NODE:
             continue
 
         if e.tagName == "conditional":
@@ -44,11 +44,19 @@ def inpschema(elm, expands, names, top=False):
 
             sch["type"] = []
 
+            param = e.getElementsByTagName("param")[0]
+            default = None
+            for opt in param.getElementsByTagName("option"):
+                if opt.getAttribute("selected").lower() == "true":
+                    sch["default"] = {
+                        param.getAttribute("name"): opt.getAttribute("value")
+                    }
+
             for when in e.getElementsByTagName("when"):
                 f = {"type": "record", "name": uniq(names, when.getAttribute("value"))}
                 f["fields"] = inpschema(when, expands, names)
                 f["fields"].append({
-                    "name": e.getElementsByTagName("param")[0].getAttribute("name"),
+                    "name": param.getAttribute("name"),
                     "type": {
                         "type": "enum",
                         "symbols": [when.getAttribute("value")],
@@ -114,13 +122,13 @@ def inpschema(elm, expands, names, top=False):
                         "name": uniq(names, e.getAttribute("name")),
                         "symbols": [e.getAttribute("falsevalue"), e.getAttribute("truevalue")]
                     }
-                    if e.getAttribute("checked") == "true":
+                    if e.getAttribute("checked").lower() == "true":
                         sch["default"] = e.getAttribute("truevalue")
                     else:
                         sch["default"] = e.getAttribute("falsevalue")
                 else:
                     sch["type"] = "boolean"
-                    if e.getAttribute("checked") == "true":
+                    if e.getAttribute("checked").lower() == "true":
                         sch["default"] = "true"
                     else:
                         sch["default"] = "false"
@@ -128,7 +136,7 @@ def inpschema(elm, expands, names, top=False):
                 sch["type"] = "Any"
 
             if sch:
-                if e.getAttribute("optional") == "True":
+                if e.getAttribute("optional").lower() == "true":
                     sch["type"] = ["null", sch["type"]]
                 if e.getAttribute("value"):
                     sch["default"] = e.getAttribute("value")
@@ -147,7 +155,7 @@ def outschema(inputs, elm, expands, names, top=False):
     schema = []
 
     for e in elm.childNodes:
-        if not isinstance(e, xml.dom.minidom.Element):
+        if e.nodeType != xml.dom.Node.ELEMENT_NODE:
             continue
 
         if e.tagName == "data":
@@ -174,16 +182,45 @@ def outschema(inputs, elm, expands, names, top=False):
     return schema
 
 
-def macros(basedir, elm, toks, expands):
+def find_macros(basedir, elm, toks, expands):
     for imp in elm.getElementsByTagName("import"):
-        macros(basedir, xml.dom.minidom.parse(os.path.join(basedir, imp.firstChild.data)).documentElement, toks, expands)
+        find_macros(basedir, xml.dom.minidom.parse(os.path.join(basedir, imp.firstChild.data)).documentElement, toks, expands)
     for tok in elm.getElementsByTagName("token"):
         toks[tok.getAttribute("name")] = tok.firstChild.data
     for x in elm.getElementsByTagName("xml"):
         expands[x.getAttribute("name")] = x
 
+def expand_macros(tool, toks, expands):
+    for e in list(tool.childNodes):
+        if e.nodeType == xml.dom.Node.ELEMENT_NODE:
+            if e.tagName == "expand":
+                point = e.nextSibling
+                tool.removeChild(e)
+                for mac in list(expands[e.getAttribute("macro")].childNodes):
+                    tool.insertBefore(mac, point)
+                continue
+            else:
+                expand_macros(e, toks, expands)
+        if e.nodeType == xml.dom.Node.TEXT_NODE:
+            for k,v in toks.items():
+                e.data = e.data.replace(k, v)
+        if e.attributes:
+            for i in xrange(0, e.attributes.length):
+                attr = e.attributes.item(i)
+                for k,v in toks.items():
+                    attr.value = attr.value.replace(k, v)
+
 
 def galaxy2cwl(tool, basedir):
+
+    toks = {}
+    expands = {}
+    names = set()
+    find_macros(basedir, tool.getElementsByTagName("macros")[0], toks, expands)
+
+    expand_macros(tool, toks, expands)
+
+
     cwl = {"class":"CommandLineTool"}
 
     #cwl["id"] = "#" + tool.getAttribute("id")
@@ -218,19 +255,13 @@ def galaxy2cwl(tool, basedir):
             }
         }]
 
-    toks = {}
-    expands = {}
-    names = set()
-    macros(basedir, tool.getElementsByTagName("macros")[0], toks, expands)
-
-    #pprint.pprint(toks)
-    #pprint.pprint(expands)
-
     cwl["inputs"] = inpschema(tool.getElementsByTagName("inputs")[0], expands, names, top=True)
     cwl["outputs"] = outschema(cwl["inputs"], tool.getElementsByTagName("outputs")[0], expands, names, top=True)
 
     return cwl
 
+class Invalid(Exception):
+    pass
 
 def bindtestparam(name, sch, params, datadir):
     if not isinstance(sch, dict):
@@ -250,18 +281,22 @@ def bindtestparam(name, sch, params, datadir):
                 if params[name] in sch["type"]["symbols"]:
                     return params[name]
                 else:
-                    return None
+                    raise Invalid()
         else:
             return params[name]
 
     if isinstance(sch["type"], list):
         for t in sch["type"]:
-            b = bindtestparam(name, t, params, datadir)
+            try:
+                b = bindtestparam(name, t, params, datadir)
+            except Invalid:
+                b = None
             if b:
                 return b
 
     if sch["type"] == "record":
         r = {}
+
         for f in sch["fields"]:
             b = bindtestparam(f["name"], f, params, datadir)
             if b is not None:
