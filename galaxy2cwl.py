@@ -10,14 +10,14 @@ import stat
 import json
 import hashlib
 
-# def literal_unicode_representer(dumper, data):
-#     if '\n' in data:
-#         return dumper.represent_scalar(u'tag:yaml.org,2002:str', data, style='|')
-#     else:
-#         return dumper.represent_scalar(u'tag:yaml.org,2002:str', data)
+def literal_unicode_representer(dumper, data):
+    if '\n' in data:
+        return dumper.represent_scalar(u'tag:yaml.org,2002:str', data, style='|')
+    else:
+        return dumper.represent_scalar(u'tag:yaml.org,2002:str', data)
 
-# yaml.add_representer(unicode, literal_unicode_representer)
-# yaml.add_representer(str, literal_unicode_representer)
+yaml.add_representer(unicode, literal_unicode_representer)
+yaml.add_representer(str, literal_unicode_representer)
 
 def uniq(names, n):
     stem = n
@@ -44,6 +44,7 @@ def inpschema(elm, expands, names, top=False):
 
             sch["type"] = []
 
+            print e.toprettyxml()
             param = e.getElementsByTagName("param")[0]
             default = None
             for opt in param.getElementsByTagName("option"):
@@ -149,10 +150,6 @@ def inpschema(elm, expands, names, top=False):
 
                 schema.append(sch)
 
-        elif e.tagName == "expand":
-            m = inpschema(expands[e.getAttribute("macro")], expands, names, top=top)
-            schema.extend(m)
-
     return schema
 
 def outschema(inputs, elm, expands, names, top=False):
@@ -201,7 +198,7 @@ def expand_macros(tool, toks, expands):
                 point = e.nextSibling
                 tool.removeChild(e)
                 for mac in list(expands[e.getAttribute("macro")].childNodes):
-                    tool.insertBefore(mac, point)
+                    tool.insertBefore(mac.cloneNode(True), point)
                 continue
             else:
                 expand_macros(e, toks, expands)
