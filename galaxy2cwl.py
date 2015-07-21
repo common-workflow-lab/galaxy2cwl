@@ -111,8 +111,12 @@ def inpschema(elm, expands, names, top=False):
                     sch["type"] = en
             elif e.getAttribute("type") == "text":
                 sch["type"] = "string"
+                if e.getAttribute("optional").lower() != "true":
+                    sch["default"] = ""
             elif e.getAttribute("type") == "integer":
                 sch["type"] = "int"
+                if e.getAttribute("optional").lower() != "true":
+                    sch["default"] = 0
             elif e.getAttribute("type") == "float":
                 sch["type"] = "float"
             elif e.getAttribute("type") == "boolean":
