@@ -44,7 +44,6 @@ def inpschema(elm, expands, names, top=False):
 
             sch["type"] = []
 
-            print e.toprettyxml()
             param = e.getElementsByTagName("param")[0]
             default = None
             for opt in param.getElementsByTagName("option"):
@@ -249,10 +248,14 @@ def galaxy2cwl(tool, basedir):
 
     interpreter = tool.getElementsByTagName("command")[0].getAttribute("interpreter")
 
+    script = interpreter + tool.getElementsByTagName("command")[0].firstChild.data
+
+    script = "\n".join((s.rstrip() for s in script.splitlines()))
+
     cwl["arguments"] = [{
         "valueFrom": {
             "engine": "#galaxy_command_line",
-            "script": interpreter + tool.getElementsByTagName("command")[0].firstChild.data
+            "script": script.strip()
             }
         }]
 
@@ -384,7 +387,7 @@ def main(argv=None):
         maketests(fn, datadir, dom.documentElement, cwl)
 
     out.write("#!/usr/bin/env cwl-runner\n")
-    yaml.safe_dump(cwl, out, encoding="utf-8")
+    yaml.dump(cwl, out, encoding="utf-8")
 
     out.close()
 
